@@ -40,3 +40,14 @@ class ServerTests(unittest.TestCase):
         h.rfile = io.BytesIO(b'xx')
         h.do_POST()
         self.assertEqual(responses[-1][0], 400)
+
+    def test_config_exposes_provider_but_never_credentials(self):
+        h = self.handler()
+        h.path = '/api/config'
+        with patch('server.provider_config', return_value={'provider':'openai', 'label':'OpenAI',
+                'model':'gpt-5.4-mini','configured':True,'key':'private-test-only'}):
+            status, body = h.do_GET()
+        self.assertEqual(status, 200)
+        self.assertEqual(body['provider'], 'openai')
+        self.assertNotIn('private-test-only', json.dumps(body))
+        self.assertNotIn('key', body)

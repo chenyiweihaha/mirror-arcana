@@ -17,7 +17,7 @@ python3 server.py
 - 可编辑问题；iPad 可使用键盘自带听写。
 - 滑动散牌混洗、切牌、单张 / 三张牌阵、逆位开关。
 - 固定牌序选牌、避免重复、逐张翻牌。
-- DeepSeek 综合解读与当前牌阵追问（需自备 API 密钥）。
+- DeepSeek / OpenAI 综合解读与当前牌阵追问（需自备 API 密钥）。
 - 基础象征资料、浏览器自动保存与刷新恢复、个人笔记、清除记录。
 - 22 张大阿尔卡那符号示例牌。符号仅为界面占位，不是经典牌面复刻。
 
@@ -27,7 +27,7 @@ python3 server.py
 - 自定义牌组导入、历史记录列表、多个体系与复杂牌阵。
 - 应用内语音识别、用户账号与正式部署。
 
-当前基础资料为项目编写的简要概括，不冒充专业审校资料；DeepSeek 解读会根据当前牌阵和用户背景生成象征性分析，不保证预测或解释正确。用于象征探索，不能验证未来事实。
+当前基础资料为项目编写的简要概括，不冒充专业审校资料；AI 解读会根据当前牌阵和用户背景生成象征性分析，不保证预测或解释正确。用于象征探索，不能验证未来事实。
 
 ## 设计约束
 
@@ -70,3 +70,22 @@ GitHub 仓库：https://github.com/chenyiweihaha/mirror-arcana 。当前为本�
 接口采用 https://api.deepseek.com/chat/completions，默认模型 deepseek-flash，JSON 输出，非思考模式。官方参考：https://api-docs.deepseek.com/en/ 。
 
 后端检查：`python3 -m unittest discover -s tests -p 'test_*.py'`（使用模拟服务，不消耗 API 额度）。
+
+
+## 保留两家 AI，并切换服务
+
+已有 `.env` 不要覆盖已有密钥，手动补充配置：
+
+```dotenv
+AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=你的DeepSeek密钥
+DEEPSEEK_MODEL=deepseek-flash
+OPENAI_API_KEY=你的OpenAI密钥
+OPENAI_MODEL=gpt-5.4-mini
+```
+
+只填实际会用的服务密钥即可。切换时把第一行改为 `AI_PROVIDER=openai` 或 `AI_PROVIDER=deepseek`，保存、停止旧服务并重新启动。未设置 AI_PROVIDER 时仍默认 DeepSeek，旧配置可继续使用。两家密钥各自保留，服务失败不会自动调用另一家；浏览器不能指定任意密钥或 API 地址。页面显示当前服务，每轮回答也记录其服务名称。切换服务后继续同一段对话，会将本次已有对话发送给新服务，点击前请确认。
+
+OpenAI 接入的是 API，不是 ChatGPT 网页账号。密钥从 https://platform.openai.com/api-keys 创建；需要可用的 API 额度。采用 Responses API、`store=false`、JSON Schema 结构化输出；默认 gpt-5.4-mini，支持替换为兼容 Responses、结构化输出和 reasoning.effort=none 的可用模型。后端继续检查实际牌阵和引用。应用不主动将密钥返回浏览器，测试使用模拟响应，未使用真实密钥联调。
+
+官方参考：https://developers.openai.com/api/reference/resources/responses/methods/create 、https://developers.openai.com/api/docs/models/gpt-5.4-mini 。

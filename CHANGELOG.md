@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 — Selectable AI providers
+
+- Keep DeepSeek and OpenAI credentials separately; select via AI_PROVIDER.
+- OpenAI Responses API adapter with structured output and shared card validation.
+- Display active service and retain per-turn provider labels; no automatic fallback.
+
 ## 0.2.0 — DeepSeek integration
 
 - Server-side DeepSeek credentials, validated card references, interpretation and follow-up UI.

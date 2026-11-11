@@ -1,4 +1,4 @@
-"""Local-only development server with same-origin DeepSeek API proxy."""
+"""Local-only development server with same-origin DeepSeek/OpenAI API proxy."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -7,7 +7,7 @@ import ipaddress
 import json
 import secrets
 import threading
-from ai import AIError, interpret, load_env
+from ai import AIError, interpret, load_env, provider_config
 
 ROOT = Path(__file__).parent
 TOKEN = secrets.token_urlsafe(32)
@@ -41,9 +41,13 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.allowed():
             return self.respond(403, {'error': '请使用本机或局域网 IP 访问。'})
         if self.path == '/api/config':
-            import os
-            key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
-            return self.respond(200, {'csrf_token': TOKEN, 'configured': bool(key and key != 'your_deepseek_api_key_here')})
+            try:
+                config = provider_config()
+            except AIError as error:
+                return self.respond(error.status, {'error': str(error)})
+            return self.respond(200, {'csrf_token': TOKEN, 'configured': config['configured'],
+                                      'provider': config['provider'], 'provider_label': config['label'],
+                                      'model': config['model']})
         return super().do_GET()
 
     def do_POST(self):

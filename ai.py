@@ -1,4 +1,4 @@
-"""DeepSeek integration; credentials and authoritative card data stay on the server."""
+"""DeepSeek/OpenAI integration; credentials and authoritative card data stay on the server."""
 import json
 import os
 import re
@@ -35,7 +35,7 @@ def load_env(path=ROOT / '.env'):
         if not line or line.startswith('#') or '=' not in line:
             continue
         key, value = line.split('=', 1)
-        if key.strip() in {'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL'}:
+        if key.strip() in {'AI_PROVIDER', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'OPENAI_API_KEY', 'OPENAI_MODEL'}:
             os.environ.setdefault(key.strip(), value.strip().strip('\"\''))
 
 
@@ -114,34 +114,85 @@ def validate_result(result, actual):
     return {'cards': expected, 'sections': clean}
 
 
+def provider_config():
+    provider = os.environ.get('AI_PROVIDER', 'deepseek').strip().lower()
+    if provider not in {'deepseek', 'openai'}:
+        raise AIError('AI_PROVIDER 只能填写 deepseek 或 openai。', 503)
+    prefix = provider.upper()
+    label = 'DeepSeek' if provider == 'deepseek' else 'OpenAI'
+    key = os.environ.get(prefix + '_API_KEY', '').strip()
+    configured = bool(key and key != 'your_' + provider + '_api_key_here')
+    return {'provider': provider, 'label': label, 'key': key, 'configured': configured,
+            'model': os.environ.get(prefix + '_MODEL', '').strip() or ('deepseek-flash' if provider == 'deepseek' else 'gpt-5.4-mini')}
+
+
+def result_schema():
+    """Both providers still pass through the same semantic card validation."""
+    card = {'type': 'object', 'additionalProperties': False,
+            'properties': {'id': {'type': 'integer'}, 'name': {'type': 'string'},
+                           'position': {'type': 'string'}, 'reversed': {'type': 'boolean'}},
+            'required': ['id', 'name', 'position', 'reversed']}
+    section = {'type': 'object', 'additionalProperties': False,
+               'properties': {'title': {'type': 'string'}, 'text': {'type': 'string'},
+                              'card_ids': {'type': 'array', 'items': {'type': 'integer'}}},
+               'required': ['title', 'text', 'card_ids']}
+    return {'type': 'object', 'additionalProperties': False,
+            'properties': {'cards': {'type': 'array', 'items': card},
+                           'sections': {'type': 'array', 'items': section}},
+            'required': ['cards', 'sections']}
+
+
 def interpret(data, transport=None):
     question, actual, history, followup = prepare(data)
-    key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
-    if not key or key == 'your_deepseek_api_key_here':
-        raise AIError('尚未配置 DeepSeek 密钥。请在工程的 .env 中填写后重启服务。', 503)
-    messages = [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': json.dumps(
+    config = provider_config()
+    provider, label = config['provider'], config['label']
+    if not config['configured']:
+        raise AIError(f'尚未配置 {label} 密钥。请在工程的 .env 中填写后重启服务。', 503)
+    messages = [{'role': 'user', 'content': json.dumps(
         {'original_question': question, 'deck': '22张大阿尔卡那符号示例牌', 'current_spread': actual}, ensure_ascii=False)}]
     messages.extend(history)
     messages.append({'role': 'user', 'content': followup or '请结合原问题，对当前牌阵进行综合解读。'})
-    payload = {'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash'), 'messages': messages,
-               'response_format': {'type': 'json_object'}, 'thinking': {'type': 'disabled'},
-               'max_tokens': 3500, 'stream': False}
-    request = Request('https://api.deepseek.com/chat/completions',
-                      data=json.dumps(payload).encode(),
-                      headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
+    if provider == 'deepseek':
+        url = 'https://api.deepseek.com/chat/completions'
+        payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': SYSTEM}] + messages,
+                   'response_format': {'type': 'json_object'}, 'thinking': {'type': 'disabled'},
+                   'max_tokens': 3500, 'stream': False}
+    else:
+        url = 'https://api.openai.com/v1/responses'
+        payload = {'model': config['model'], 'instructions': SYSTEM, 'input': messages,
+                   'text': {'format': {'type': 'json_schema', 'name': 'tarot_reading',
+                                       'strict': True, 'schema': result_schema()}},
+                   'reasoning': {'effort': 'none'}, 'max_output_tokens': 6000,
+                   'store': False, 'stream': False}
+    request = Request(url, data=json.dumps(payload).encode(),
+                      headers={'Authorization': 'Bearer ' + config['key'], 'Content-Type': 'application/json'}, method='POST')
     try:
         with (transport or urlopen)(request, timeout=90) as response:
             envelope = json.loads(response.read(256_000))
-        choice = envelope['choices'][0]
-        if choice.get('finish_reason') != 'stop':
-            raise AIError('AI 未完整生成解读，请重试。')
-        result = json.loads(choice['message']['content'])
+        if provider == 'deepseek':
+            choice = envelope['choices'][0]
+            if choice.get('finish_reason') != 'stop':
+                raise AIError('AI 未完整生成解读，请重试。')
+            content = choice['message']['content']
+        else:
+            if envelope.get('status') != 'completed':
+                raise AIError('OpenAI 未完整生成解读，请重试或检查模型设置。')
+            parts = [part for item in envelope.get('output', []) if item.get('type') == 'message'
+                     for part in item.get('content', [])]
+            if any(part.get('type') == 'refusal' for part in parts):
+                raise AIError('OpenAI 未提供本次解读，可以调整问题后重试。')
+            content = ''.join(part['text'] for part in parts if part.get('type') == 'output_text')
+        result = json.loads(content)
         return validate_result(result, actual)
     except HTTPError as error:
-        messages = {401: 'DeepSeek 密钥无效，请检查 .env 后重启。', 402: 'DeepSeek API 余额不足。',
-                    429: 'DeepSeek 请求过于频繁，请稍后重试。'}
-        raise AIError(messages.get(error.code, 'DeepSeek 服务暂时不可用，请稍后重试。')) from None
+        messages = {400: f'{label} 请求参数或模型不兼容，请检查模型配置。',
+                    401: f'{label} 密钥无效，请检查 .env 后重启。',
+                    402: f'{label} API 余额不足。',
+                    403: f'{label} 访问被拒绝，请检查账号和模型权限。',
+                    404: f'{label} 模型不存在或账号无权使用，请检查配置。',
+                    429: f'{label} 请求达到限额，请检查余额、配额或稍后重试。'}
+        raise AIError(messages.get(error.code, f'{label} 服务暂时不可用，请稍后重试。')) from None
     except (URLError, TimeoutError, socket.timeout):
-        raise AIError('无法连接 DeepSeek 或请求超时，请检查网络后重试。') from None
-    except (KeyError, IndexError, TypeError, ValueError):
+        raise AIError(f'无法连接 {label} 或请求超时，请检查网络后重试。') from None
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
         raise AIError('AI 返回了无法验证的格式，请重试。') from None
