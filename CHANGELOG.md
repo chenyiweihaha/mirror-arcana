@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 — DeepSeek integration
+
+- Server-side DeepSeek credentials, validated card references, interpretation and follow-up UI.
+- Local configuration, friendly API errors and mock backend tests.
+- No live API verification without the user’s key.
+
 ## 0.1.0 — Prototype
 
 - Editable questions, touch shuffle, cut, one-card and three-card spreads.

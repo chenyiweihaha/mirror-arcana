@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m py_compile server.py
+      - run: python -m py_compile server.py ai.py
+      - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: node --check static/app.js
       - run: npm test
